@@ -82,10 +82,13 @@ python main.py
 
 ## Przetwarzanie paragonów
 
-1. Umieść zdjęcia paragonów w folderze `paragony/nowe/`
+1. Umieść zdjęcia paragonów **lub pliki PDF** w folderze `paragony/nowe/`
 2. Wybierz opcję 2 z menu głównego
-3. Aplikacja automatycznie przetworzy paragony i przeniesie je do odpowiednich folderów
+3. Aplikacja automatycznie przetworzy paragony (w tym PDF-y) i przeniesie je do odpowiednich folderów
 4. Wybierz opcję 3, aby zaimportować przetworzone paragony do spiżarni
+
+### Obsługa PDF
+Aplikacja automatycznie konwertuje każdą stronę PDF na obraz i przetwarza ją jak zwykłe zdjęcie paragonu. Nie musisz już ręcznie konwertować PDF-ów na JPG.
 
 ## Konfiguracja
 

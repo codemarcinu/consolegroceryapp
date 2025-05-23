@@ -10,6 +10,8 @@ from typing import Optional, List, Tuple
 from config import KONFIGURACJA
 from llm_integration import parsuj_paragon_ai
 from storage_manager import StorageManager
+import tempfile
+from pdf2image import convert_from_path
 
 class ParagonProcessor:
     """
@@ -177,36 +179,50 @@ class ParagonProcessor:
         Returns:
             Tuple[int, int]: Liczba przetworzonych paragonów i liczba błędów
         """
-        # Znajdź wszystkie pliki obrazów
-        extensions = ['*.jpg', '*.jpeg', '*.png', '*.bmp', '*.tiff']
+        # Znajdź wszystkie pliki obrazów oraz PDF
+        extensions = ['*.jpg', '*.jpeg', '*.png', '*.bmp', '*.tiff', '*.pdf', '*.PDF']
         pliki_do_przetworzenia = []
-        
         for ext in extensions:
             pliki_do_przetworzenia.extend(glob.glob(os.path.join(self.folder_nowe, ext)))
-            pliki_do_przetworzenia.extend(glob.glob(os.path.join(self.folder_nowe, ext.upper())))
-        
         if not pliki_do_przetworzenia:
             print("📁 Brak nowych paragonów do przetworzenia")
             return 0, 0
-        
         print(f"📸 Znaleziono {len(pliki_do_przetworzenia)} paragonów do przetworzenia")
-        
         przetworzono = 0
         bledy = 0
-        
         for sciezka_pliku in pliki_do_przetworzenia:
-            if self.przetworz_paragon(sciezka_pliku):
-                przetworzono += 1
+            if sciezka_pliku.lower().endswith('.pdf'):
+                # Konwertuj każdą stronę PDF na obraz i przetwarzaj
+                try:
+                    obrazy = convert_from_path(sciezka_pliku, dpi=300)
+                    for idx, obraz in enumerate(obrazy):
+                        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_img:
+                            obraz.save(tmp_img.name, 'JPEG')
+                            wynik = self.przetworz_paragon(tmp_img.name)
+                            if wynik:
+                                przetworzono += 1
+                            else:
+                                bledy += 1
+                            os.unlink(tmp_img.name)
+                    # Po przetworzeniu przenieś PDF do przetworzonych lub błędów (jeśli choć jedna strona się udała)
+                    if przetworzono > 0:
+                        self._przenies_do_folderu(sciezka_pliku, self.folder_przetworzone)
+                    else:
+                        self._przenies_do_folderu(sciezka_pliku, self.folder_bledy)
+                except Exception as e:
+                    print(f"❌ Błąd podczas konwersji PDF '{sciezka_pliku}': {e}")
+                    self._przenies_do_folderu(sciezka_pliku, self.folder_bledy)
+                    bledy += 1
             else:
-                bledy += 1
-        
+                if self.przetworz_paragon(sciezka_pliku):
+                    przetworzono += 1
+                else:
+                    bledy += 1
         print(f"\n📊 PODSUMOWANIE:")
         print(f"✅ Przetworzono: {przetworzono}")
         print(f"❌ Błędy: {bledy}")
-        
         if przetworzono > 0:
             print(f"\n🔄 Użyj opcji 'Importuj przetworzone paragony' aby dodać produkty do spiżarni")
-        
         return przetworzono, bledy
     
     def _przenies_do_folderu(self, sciezka_pliku: str, folder_docelowy: str) -> None:

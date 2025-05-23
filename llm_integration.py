@@ -1,323 +1,117 @@
+import requests
 import json
-import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
-import openai
 from config import KONFIGURACJA
 
-class LLMIntegrator:
-    """
-    Klasa do integracji z modelami językowymi (LLM) dla różnych funkcji AI.
-    """
-    
-    def __init__(self):
-        """
-        Inicjalizuje integrator LLM.
-        """
-        self.api_key = KONFIGURACJA["llm"]["api_key"]
-        openai.api_key = self.api_key
-        
-        # Ustawienia modelu
-        self.model = KONFIGURACJA["llm"]["model"]
-        self.temperature = KONFIGURACJA["llm"]["temperature"]
-        self.max_tokens = KONFIGURACJA["llm"]["max_tokens"]
-    
-    def parsuj_paragon_ai(self, tekst: str) -> Optional[List[Dict[str, Any]]]:
-        """
-        Parsuje tekst paragonu używając AI do wyodrębnienia produktów.
-        
-        Args:
-            tekst: Tekst paragonu z OCR
-            
-        Returns:
-            Optional[List[Dict[str, Any]]]: Lista produktów lub None w przypadku błędu
-        """
+OLLAMA_URL = KONFIGURACJA["llm"].get("base_url", "http://localhost:11434")
+OLLAMA_MODEL = KONFIGURACJA["llm"].get("model", "bielik-1.5b-v3.0-instruct")
+
+class OllamaClient:
+    def __init__(self, model: Optional[str] = None, base_url: Optional[str] = None):
+        self.model = model or OLLAMA_MODEL
+        self.base_url = base_url or OLLAMA_URL
+
+    def zapytaj_llm(self, prompt: str, system_prompt: str = "", max_tokens: int = 1024, temperatura: float = 0.1) -> str:
+        # Łączy system prompt i user prompt zgodnie z template Bielika
+        full_prompt = f"""<s><|start_header_id|>system<|end_header_id|>\n{system_prompt}<|eot_id|><|start_header_id|>user<|end_header_id|>\n{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n"""
         try:
-            prompt = f"""Przeanalizuj poniższy tekst paragonu i wyodrębnij produkty.
-            Dla każdego produktu podaj:
-            - nazwę
-            - cenę
-            - kategorię (wybierz z: nabiał, mięso, warzywa, owoce, pieczywo, przyprawy, napoje, słodycze, inne)
-            - sugerowaną datę ważności (w formacie YYYY-MM-DD)
-            
-            Tekst paragonu:
-            {tekst}
-            
-            Zwróć wynik jako listę obiektów JSON w formacie:
-            [
-                {{
-                    "nazwa": "nazwa produktu",
-                    "cena": cena jako float,
-                    "kategoria": "kategoria",
-                    "data_waznosci": "YYYY-MM-DD"
-                }},
-                ...
-            ]
-            
-            Jeśli nie możesz rozpoznać jakiegoś pola, użyj null.
-            """
-            
-            response = openai.ChatCompletion.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "Jesteś asystentem do analizy paragonów. Twoim zadaniem jest wyodrębnienie produktów z tekstu paragonu."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens
+            response = requests.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": full_prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": temperatura,
+                        "num_predict": max_tokens
+                    }
+                },
+                timeout=KONFIGURACJA["llm"].get("timeout_seconds", 60)
             )
-            
-            # Parsuj odpowiedź
-            odpowiedz = response.choices[0].message.content
-            produkty = json.loads(odpowiedz)
-            
-            # Walidacja i czyszczenie danych
-            for produkt in produkty:
-                # Upewnij się, że cena jest floatem
-                if isinstance(produkt.get("cena"), str):
-                    try:
-                        produkt["cena"] = float(produkt["cena"].replace(",", "."))
-                    except ValueError:
-                        produkt["cena"] = 0.0
-                
-                # Upewnij się, że data jest w poprawnym formacie
-                if produkt.get("data_waznosci"):
-                    try:
-                        datetime.strptime(produkt["data_waznosci"], "%Y-%m-%d")
-                    except ValueError:
-                        produkt["data_waznosci"] = None
-            
-            return produkty
-            
-        except Exception as e:
-            print(f"❌ Błąd podczas parsowania paragonu przez AI: {e}")
-            return None
-    
-    def sugeruj_kategorie(self, nazwa_produktu: str) -> Optional[List[str]]:
-        """
-        Sugeruje kategorie dla produktu na podstawie jego nazwy.
-        
-        Args:
-            nazwa_produktu: Nazwa produktu
-            
-        Returns:
-            Optional[List[str]]]: Lista sugerowanych kategorii lub None w przypadku błędu
-        """
-        try:
-            prompt = f"""Sugeruj kategorie dla produktu: {nazwa_produktu}
-            
-            Dostępne kategorie:
-            - nabiał
-            - mięso
-            - warzywa
-            - owoce
-            - pieczywo
-            - przyprawy
-            - napoje
-            - słodycze
-            - inne
-            
-            Zwróć maksymalnie 3 najbardziej prawdopodobne kategorie jako listę JSON.
-            """
-            
-            response = openai.ChatCompletion.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "Jesteś asystentem do kategoryzacji produktów spożywczych."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens
-            )
-            
-            kategorie = json.loads(response.choices[0].message.content)
-            return kategorie[:3]  # Zwróć max 3 kategorie
-            
-        except Exception as e:
-            print(f"❌ Błąd podczas sugerowania kategorii: {e}")
-            return None
-    
-    def sugeruj_date_waznosci(self, nazwa_produktu: str, kategoria: str) -> Optional[str]:
-        """
-        Sugeruje datę ważności dla produktu.
-        
-        Args:
-            nazwa_produktu: Nazwa produktu
-            kategoria: Kategoria produktu
-            
-        Returns:
-            Optional[str]: Sugerowana data ważności w formacie YYYY-MM-DD lub None w przypadku błędu
-        """
-        try:
-            prompt = f"""Sugeruj datę ważności dla produktu:
-            Nazwa: {nazwa_produktu}
-            Kategoria: {kategoria}
-            
-            Zwróć datę w formacie YYYY-MM-DD.
-            Data powinna być realistyczna, biorąc pod uwagę typ produktu.
-            """
-            
-            response = openai.ChatCompletion.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "Jesteś asystentem do określania dat ważności produktów spożywczych."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens
-            )
-            
-            data = response.choices[0].message.content.strip()
-            
-            # Walidacja formatu daty
-            try:
-                datetime.strptime(data, "%Y-%m-%d")
-                return data
-            except ValueError:
-                print(f"⚠️ Nieprawidłowy format daty: {data}")
-                return None
-            
-        except Exception as e:
-            print(f"❌ Błąd podczas sugerowania daty ważności: {e}")
-            return None
-    
-    def sugeruj_przepisy(self, produkty: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
-        """
-        Sugeruje przepisy na podstawie dostępnych produktów.
-        
-        Args:
-            produkty: Lista dostępnych produktów
-            
-        Returns:
-            Optional[List[Dict[str, Any]]]: Lista sugerowanych przepisów lub None w przypadku błędu
-        """
-        try:
-            # Przygotuj listę produktów do promptu
-            produkty_text = "\n".join([
-                f"- {p['nazwa']} ({p['kategoria']})"
-                for p in produkty
-            ])
-            
-            prompt = f"""Sugeruj przepisy na podstawie dostępnych produktów:
-            
-            Dostępne produkty:
-            {produkty_text}
-            
-            Dla każdego przepisu podaj:
-            - nazwę
-            - listę potrzebnych produktów
-            - krótki opis przygotowania
-            - szacowany czas przygotowania w minutach
-            
-            Zwróć listę przepisów jako JSON w formacie:
-            [
-                {{
-                    "nazwa": "nazwa przepisu",
-                    "produkty": ["produkt1", "produkt2", ...],
-                    "przygotowanie": "krótki opis",
-                    "czas": czas w minutach
-                }},
-                ...
-            ]
-            """
-            
-            response = openai.ChatCompletion.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "Jesteś asystentem kulinarnym. Twoim zadaniem jest sugerowanie przepisów na podstawie dostępnych produktów."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=self.temperature,
-                max_tokens=self.max_tokens
-            )
-            
-            przepisy = json.loads(response.choices[0].message.content)
-            return przepisy
-            
-        except Exception as e:
-            print(f"❌ Błąd podczas sugerowania przepisów: {e}")
-            return None
+            if response.status_code == 200:
+                return response.json()["response"].strip()
+            else:
+                return f"Błąd HTTP {response.status_code}: {response.text}"
+        except requests.exceptions.Timeout:
+            return "Błąd: Model Ollama nie odpowiedział w wyznaczonym czasie (timeout)."
+        except requests.exceptions.RequestException as e:
+            return f"Błąd połączenia z LLM Ollama: {e}"
+
 
 def parsuj_paragon_ai(tekst: str, konfiguracja: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
-    """
-    Funkcja pomocnicza do parsowania paragonu przez AI.
-    
-    Args:
-        tekst: Tekst paragonu
-        konfiguracja: Konfiguracja LLM
-        
-    Returns:
-        Optional[List[Dict[str, Any]]]: Lista produktów lub None w przypadku błędu
-    """
-    integrator = LLMIntegrator()
-    return integrator.parsuj_paragon_ai(tekst)
+    system_prompt = """Jesteś asystentem do analizy paragonów. Twoim zadaniem jest wyodrębnienie produktów z tekstu paragonu.
+    Zwróć TYLKO listę produktów w formacie JSON, bez żadnych dodatkowych wyjaśnień czy komentarzy.
+    Format odpowiedzi MUSI być poprawnym JSON array z polskimi znakami:
+    [
+        {
+            "nazwa": "Mleko 3,2%",
+            "cena": 4.99,
+            "kategoria": "nabiał"
+        },
+        {
+            "nazwa": "Chleb żytni",
+            "cena": 6.50,
+            "kategoria": "pieczywo"
+        }
+    ]"""
 
-def sugeruj_kategorie(nazwa_produktu: str, konfiguracja_llm: Dict[str, Any]) -> str:
-    """
-    Sugeruje kategorię dla produktu na podstawie jego nazwy.
-    
-    Args:
-        nazwa_produktu: Nazwa produktu
-        konfiguracja_llm: Konfiguracja LLM
-        
-    Returns:
-        str: Sugerowana kategoria
-    """
-    system_prompt = """Jesteś ekspertem w kategoryzacji produktów spożywczych i artykułów gospodarstwa domowego. Twoim zadaniem jest przypisanie produktu do jednej z predefiniowanych kategorii."""
+    prompt = f"""Przeanalizuj poniższy tekst paragonu i wyodrębnij produkty. Zwróć TYLKO listę produktów w formacie JSON.
+    Dla każdego produktu podaj:
+    - nazwę (zachowaj polskie znaki)
+    - cenę (jako float)
+    - kategorię (wybierz z: nabiał, mięso, warzywa, owoce, pieczywo, przyprawy, napoje, słodycze, inne)
 
-    prompt = f"""Przypisz poniższy produkt do jednej z następujących kategorii:
-{Nazwa_produktu}
+    Tekst paragonu:
+    {tekst}"""
 
-Dostępne kategorie:
-{Nazwa_produktu}
-
-Zwróć tylko nazwę kategorii, bez żadnych dodatkowych wyjaśnień."""
-
-    llm = OllamaClient(model=konfiguracja_llm.get('model'),
-                      base_url=konfiguracja_llm.get('base_url'))
-    
-    odpowiedz = llm.zapytaj_llm(prompt, system_prompt,
-                               max_tokens=50,
-                               temperatura=0.1)
-    
-    if odpowiedz and not odpowiedz.startswith("Błąd"):
-        return odpowiedz.strip()
-    return "Inne"
-
-def sugeruj_date_waznosci(nazwa_produktu: str, kategoria: str,
-                         konfiguracja_llm: Dict[str, Any]) -> datetime:
-    """
-    Sugeruje datę ważności dla produktu na podstawie jego nazwy i kategorii.
-    
-    Args:
-        nazwa_produktu: Nazwa produktu
-        kategoria: Kategoria produktu
-        konfiguracja_llm: Konfiguracja LLM
-        
-    Returns:
-        datetime: Sugerowana data ważności
-    """
-    system_prompt = """Jesteś ekspertem w zakresie przechowywania żywności i artykułów gospodarstwa domowego. Twoim zadaniem jest oszacowanie typowego okresu przydatności do spożycia dla produktów."""
-
-    prompt = f"""Oszacuj typowy okres przydatności do spożycia dla poniższego produktu:
-Nazwa: {nazwa_produktu}
-Kategoria: {kategoria}
-
-Zwróć tylko liczbę dni przydatności do spożycia, bez żadnych dodatkowych wyjaśnień."""
-
-    llm = OllamaClient(model=konfiguracja_llm.get('model'),
-                      base_url=konfiguracja_llm.get('base_url'))
-    
-    odpowiedz = llm.zapytaj_llm(prompt, system_prompt,
-                               max_tokens=50,
-                               temperatura=0.1)
+    llm = OllamaClient(model=konfiguracja.get('model'), base_url=konfiguracja.get('base_url'))
+    odpowiedz = llm.zapytaj_llm(prompt, system_prompt, max_tokens=konfiguracja.get('max_tokens', 1024), temperatura=konfiguracja.get('temperatura', 0.1))
     
     try:
+        # Usuń ewentualne znaki przed i po JSON
+        odpowiedz = odpowiedz.strip()
+        if odpowiedz.startswith('<tool_call>'):
+            odpowiedz = odpowiedz[odpowiedz.find('['):odpowiedz.rfind(']')+1]
+        
+        # Konwertuj odpowiedź na UTF-8
+        odpowiedz = odpowiedz.encode('utf-8').decode('utf-8')
+        
+        produkty = json.loads(odpowiedz)
+        if not isinstance(produkty, list):
+            print(f"❌ Nieprawidłowy format odpowiedzi - oczekiwano listy, otrzymano: {type(produkty)}")
+            return None
+            
+        for produkt in produkty:
+            if isinstance(produkt.get("cena"), str):
+                try:
+                    produkt["cena"] = float(produkt["cena"].replace(",", "."))
+                except ValueError:
+                    produkt["cena"] = 0.0
+        return produkty
+    except Exception as e:
+        print(f"❌ Błąd podczas parsowania paragonu przez AI: {e}")
+        print(f"Odpowiedź LLM: {odpowiedz}")
+        return None
+
+def sugeruj_kategorie(nazwa_produktu: str, konfiguracja_llm: Dict[str, Any]) -> str:
+    system_prompt = "Jesteś ekspertem w kategoryzacji produktów spożywczych i artykułów gospodarstwa domowego. Twoim zadaniem jest przypisanie produktu do jednej z predefiniowanych kategorii."
+    prompt = f"""Przypisz poniższy produkt do jednej z następujących kategorii:\n{nazwa_produktu}\n\nDostępne kategorie:\nnabiał, mięso, warzywa, owoce, pieczywo, przyprawy, napoje, słodycze, inne\n\nZwróć tylko nazwę kategorii, bez żadnych dodatkowych wyjaśnień."""
+    llm = OllamaClient(model=konfiguracja_llm.get('model'), base_url=konfiguracja_llm.get('base_url'))
+    odpowiedz = llm.zapytaj_llm(prompt, system_prompt, max_tokens=50, temperatura=0.1)
+    if odpowiedz and not odpowiedz.startswith("Błąd"):
+        return odpowiedz.strip().split("\n")[0]
+    return "inne"
+
+def sugeruj_date_waznosci(nazwa_produktu: str, kategoria: str, konfiguracja_llm: Dict[str, Any]) -> datetime:
+    system_prompt = "Jesteś ekspertem w zakresie przechowywania żywności i artykułów gospodarstwa domowego. Twoim zadaniem jest oszacowanie typowego okresu przydatności do spożycia dla produktów."
+    prompt = f"""Oszacuj typowy okres przydatności do spożycia dla poniższego produktu:\nNazwa: {nazwa_produktu}\nKategoria: {kategoria}\n\nZwróć tylko liczbę dni przydatności do spożycia, bez żadnych dodatkowych wyjaśnień."""
+    llm = OllamaClient(model=konfiguracja_llm.get('model'), base_url=konfiguracja_llm.get('base_url'))
+    odpowiedz = llm.zapytaj_llm(prompt, system_prompt, max_tokens=50, temperatura=0.1)
+    try:
         if odpowiedz and not odpowiedz.startswith("Błąd"):
-            dni = int(odpowiedz.strip())
+            dni = int([s for s in odpowiedz.split() if s.isdigit()][0])
             return datetime.now() + timedelta(days=dni)
-    except ValueError:
+    except Exception:
         pass
-    
-    # Domyślna data ważności (7 dni) w przypadku błędu
     return datetime.now() + timedelta(days=7) 

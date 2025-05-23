@@ -1,6 +1,12 @@
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 import os
+import glob
+import json
+import shutil
+import cv2
+import numpy as np
+from pdf2image import convert_from_path
 
 from models import Produkt
 from config import KONFIGURACJA
@@ -106,21 +112,109 @@ class AsystentZakupow:
         """
         Obsługuje przetwarzanie paragonów z obrazów.
         """
-        self.ui.wyswietl_komunikat("🔄 Rozpoczynam przetwarzanie paragonów...", "info")
-        przetworzone, bledy = self.paragon_processor.przetworz_wszystkie_paragony()
+        print("\n🔄 Rozpoczynam przetwarzanie paragonów...")
         
-        if przetworzone > 0:
-            self.ui.wyswietl_komunikat(
-                f"✅ Przetworzono {przetworzone} paragonów!",
-                "sukces"
-            )
+        # Znajdź wszystkie pliki obrazów w folderze paragony/nowe
+        pliki = []
+        for rozszerzenie in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.pdf']:
+            pliki.extend(glob.glob(f"paragony/nowe/*{rozszerzenie}"))
+        
+        if not pliki:
+            print("❌ Nie znaleziono żadnych paragonów do przetworzenia!")
+            return
+        
+        print(f"📸 Znaleziono {len(pliki)} paragonów do przetworzenia\n")
+        
+        przetworzone = 0
+        bledy = 0
+        
+        for i, plik in enumerate(pliki, 1):
+            print(f"\n🔍 Przetwarzam: {os.path.basename(plik)} ({i}/{len(pliki)})")
+            
+            try:
+                # Konwertuj PDF do obrazu jeśli to PDF
+                if plik.lower().endswith('.pdf'):
+                    print("📄 Konwertuję PDF do obrazu...")
+                    try:
+                        # Konwertuj PDF do obrazu
+                        obrazy = convert_from_path(plik)
+                        if not obrazy:
+                            print(f"❌ Nie udało się przekonwertować PDF '{plik}'")
+                            bledy += 1
+                            continue
+                        
+                        # Zapisz pierwszy obraz tymczasowo
+                        temp_image = "temp_image.png"
+                        obrazy[0].save(temp_image, "PNG")
+                        
+                        # Wczytaj obraz przez OpenCV
+                        obraz = cv2.imread(temp_image)
+                        
+                        # Usuń tymczasowy plik
+                        os.remove(temp_image)
+                        
+                        if obraz is None:
+                            print(f"❌ Nie udało się wczytać przekonwertowanego obrazu")
+                            bledy += 1
+                            continue
+                        
+                    except Exception as e:
+                        print(f"❌ Błąd podczas konwersji PDF '{plik}': {str(e)}")
+                        bledy += 1
+                        continue
+                else:
+                    obraz = cv2.imread(plik)
+                    if obraz is None:
+                        print(f"❌ Nie udało się odczytać obrazu '{plik}'")
+                        bledy += 1
+                        continue
+                
+                # Rozpoznaj tekst
+                print("🔍 Rozpoznaję tekst...")
+                tekst = self.paragon_processor.rozpoznaj_tekst(obraz)
+                if not tekst:
+                    print("❌ Nie udało się rozpoznać tekstu!")
+                    bledy += 1
+                    continue
+                
+                print("✅ Tekst rozpoznany, parsowanie przez AI...")
+                # Parsuj tekst przez AI
+                produkty = self.paragon_processor.parsuj_paragon_ai(tekst, KONFIGURACJA["llm"])
+                if not produkty:
+                    print("❌ AI nie znalazło produktów")
+                    bledy += 1
+                    continue
+                
+                # Zapisz przetworzone produkty
+                nazwa_pliku = os.path.splitext(os.path.basename(plik))[0]
+                sciezka_wyjsciowa = f"paragony/przetworzone/{nazwa_pliku}.json"
+                
+                # Upewnij się, że folder istnieje
+                os.makedirs("paragony/przetworzone", exist_ok=True)
+                
+                with open(sciezka_wyjsciowa, 'w', encoding='utf-8') as f:
+                    json.dump(produkty, f, ensure_ascii=False, indent=2)
+                
+                print(f"✅ Zapisano {len(produkty)} produktów do {sciezka_wyjsciowa}")
+                przetworzone += 1
+                
+                # Przenieś przetworzony plik do archiwum
+                archiwum = f"paragony/archiwum/{os.path.basename(plik)}"
+                os.makedirs("paragony/archiwum", exist_ok=True)
+                shutil.move(plik, archiwum)
+                print(f"📦 Przeniesiono do archiwum: {archiwum}")
+                
+            except Exception as e:
+                print(f"❌ Błąd podczas przetwarzania '{plik}': {str(e)}")
+                bledy += 1
+                continue
+        
+        print("\n📊 PODSUMOWANIE:")
+        print(f"✅ Przetworzono: {przetworzone}")
+        print(f"❌ Błędy: {bledy}")
+        
         if bledy > 0:
-            self.ui.wyswietl_komunikat(
-                f"⚠️ Wystąpiło {bledy} błędów podczas przetwarzania!",
-                "ostrzezenie"
-            )
-        if przetworzone == 0 and bledy == 0:
-            self.ui.wyswietl_komunikat("📁 Brak nowych paragonów do przetworzenia", "info")
+            print(f"\n⚠️ ⚠️ Wystąpiło {bledy} błędów podczas przetwarzania!")
     
     def _importuj_paragony(self) -> None:
         """

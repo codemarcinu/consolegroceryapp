@@ -1,0 +1,7 @@
+easyocr
+opencv-python
+requests
+tabulate
+colorama
+fuzzywuzzy
+python-levenshtein 

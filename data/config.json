@@ -1,7 +1,7 @@
 {
     "llm": {
         "enabled": true,
-        "model": "bielik",
+        "model": "bielik-local-q8",
         "base_url": "http://localhost:11434",
         "timeout_seconds": 120,
         "max_tokens": 1024,

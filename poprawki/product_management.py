@@ -249,58 +249,93 @@ class ProductManager:
                 os.makedirs(KONFIGURACJA["paths"]["archiwum_json"], exist_ok=True)
                 archive_file = os.path.join(KONFIGURACJA["paths"]["archiwum_json"], os.path.basename(json_file))
                 shutil.move(json_file, archive_file)
-                print(f"📦 Przeniesiono paragon do archiwum: {os.path.basename(archive_file)}")
+                print(f"📁 Paragon przeniesiony do archiwum")
                 
                 return True
             else:
-                print("❌ Nie zaimportowano żadnych produktów")
+                print("❌ Nie dodano żadnych produktów")
                 return False
-            
+                
         except Exception as e:
-            print(f"❌ Błąd podczas importu paragonu: {e}")
+            print(f"❌ Błąd importu: {e}")
             return False
     
     def szybkie_zarzadzanie_produktami(self) -> bool:
         """
-        Umożliwia szybkie zarządzanie produktami (oznaczanie jako zużyte/usuwanie).
+        Umożliwia szybkie wyszukiwanie i zarządzanie produktami.
         
         Returns:
             bool: True jeśli operacja się powiodła, False w przeciwnym razie
         """
         try:
+            # Pobierz frazę wyszukiwania
+            fraza = input("\n🔍 Podaj frazę do wyszukania: ").strip()
+            if not fraza:
+                print("❌ Fraza wyszukiwania nie może być pusta!")
+                return False
+            
+            # Wczytaj produkty
             produkty = self.storage_manager.wczytaj_produkty()
             produkty_aktywne = [p for p in produkty if not p.zuzyty]
             
             if not produkty_aktywne:
-                print("📦 Brak aktywnych produktów do zarządzania")
+                print("❌ Brak aktywnych produktów!")
                 return False
             
-            # Sortuj według daty ważności
-            produkty_aktywne.sort(key=lambda x: x.data_waznosci)
-            
-            print("\n📋 Lista produktów do zarządzania:")
-            for i, p in enumerate(produkty_aktywne, 1):
-                dni_do_wygasniecia = (p.data_waznosci - datetime.now()).days
-                print(f"{i}. {p.nazwa} ({p.kategoria}) - {dni_do_wygasniecia} dni do wygaśnięcia")
-            
-            print("\n0. Wróć")
-            
+            # Wyszukiwanie rozmyte
             try:
-                wybor = input("\nWybierz produkt do zarządzania (0-{len(produkty_aktywne)}): ")
+                from fuzzywuzzy import fuzz
                 
-                if wybor == "0":
-                    return False
+                wyniki = []
+                for i, produkt in enumerate(produkty_aktywne):
+                    podobienstwo = fuzz.partial_ratio(fraza.lower(), produkt.nazwa.lower())
+                    if podobienstwo > 60:  # 60% podobieństwa
+                        dni_do_konca = (produkt.data_waznosci - datetime.now()).days
+                        wyniki.append((produkt, podobienstwo, dni_do_konca, i))
                 
-                idx = int(wybor) - 1
-                if 0 <= idx < len(produkty_aktywne):
-                    return self._zarzadzaj_produktem(produkty_aktywne[idx], produkty)
-                else:
-                    print("❌ Nieprawidłowy wybór")
-                    return False
+                if wyniki:
+                    wyniki.sort(key=lambda x: (-x[1], x[2]))  # sortuj po podobieństwie, potem po terminie
                     
-            except ValueError:
-                print("❌ Nieprawidłowy wybór")
-                return False
+                    print(f"\n📦 Znalezione produkty dla '{fraza}':")
+                    for i, (produkt, podobienstwo, dni, _) in enumerate(wyniki[:5], 1):
+                        kolor = "🔴" if dni <= 3 else "🟡" if dni <= 7 else "🟢"
+                        print(f"{i}. {kolor} {produkt.nazwa} ({produkt.kategoria}) - kończy się za {dni} dni")
+                    
+                    try:
+                        wybor = input("\nWybierz numer produktu do zarządzania (Enter = anuluj): ")
+                        if wybor:
+                            idx = int(wybor) - 1
+                            if 0 <= idx < len(wyniki):
+                                wybrany_produkt, _, _, original_idx = wyniki[idx]
+                                return self._zarzadzaj_produktem(wybrany_produkt, produkty)
+                    except (ValueError, IndexError):
+                        print("❌ Nieprawidłowy wybór")
+                else:
+                    print(f"❌ Nie znaleziono produktów dla '{fraza}'")
+                    
+            except ImportError:
+                print("⚠️ Moduł fuzzywuzzy nie jest zainstalowany. Używanie prostego wyszukiwania...")
+                # Proste wyszukiwanie bez fuzzywuzzy
+                wyniki = [p for p in produkty_aktywne if fraza.lower() in p.nazwa.lower()]
+                if wyniki:
+                    print(f"\n📦 Znalezione produkty dla '{fraza}':")
+                    for i, produkt in enumerate(wyniki[:5], 1):
+                        dni_do_konca = (produkt.data_waznosci - datetime.now()).days
+                        kolor = "🔴" if dni_do_konca <= 3 else "🟡" if dni_do_konca <= 7 else "🟢"
+                        print(f"{i}. {kolor} {produkt.nazwa} ({produkt.kategoria}) - kończy się za {dni_do_konca} dni")
+                    
+                    try:
+                        wybor = input("\nWybierz numer produktu do zarządzania (Enter = anuluj): ")
+                        if wybor:
+                            idx = int(wybor) - 1
+                            if 0 <= idx < len(wyniki):
+                                return self._zarzadzaj_produktem(wyniki[idx], produkty)
+                    except (ValueError, IndexError):
+                        print("❌ Nieprawidłowy wybór")
+                else:
+                    print(f"❌ Nie znaleziono produktów dla '{fraza}'")
+            
+            return False
             
         except Exception as e:
             print(f"❌ Błąd podczas zarządzania produktami: {e}")
@@ -308,10 +343,10 @@ class ProductManager:
     
     def _zarzadzaj_produktem(self, produkt: Produkt, wszystkie_produkty: List[Produkt]) -> bool:
         """
-        Zarządza pojedynczym produktem.
+        Zarządza wybranym produktem.
         
         Args:
-            produkt: Produkt do zarządzania
+            produkt: Wybrany produkt
             wszystkie_produkty: Lista wszystkich produktów
             
         Returns:
@@ -319,104 +354,94 @@ class ProductManager:
         """
         print(f"\n📦 Zarządzanie produktem: {produkt.nazwa}")
         print("1. Oznacz jako zużyty")
-        print("2. Usuń produkt")
-        print("0. Wróć")
+        print("2. Usuń całkowicie")
+        print("3. Anuluj")
         
-        try:
-            wybor = input("\nWybierz operację (0-2): ")
-            
-            if wybor == "0":
-                return False
-            elif wybor == "1":
-                produkt.zuzyty = True
-                produkt.data_zuzycia = datetime.now()
-                if self.storage_manager.zapisz_produkty(wszystkie_produkty):
-                    print(f"✅ Oznaczono jako zużyty: {produkt.nazwa}")
-                    return True
-                else:
-                    print("❌ Błąd podczas zapisywania zmian")
-                    return False
-            elif wybor == "2":
-                potwierdz = input(f"Czy na pewno chcesz usunąć {produkt.nazwa}? (t/n): ").lower()
-                if potwierdz == 't':
-                    wszystkie_produkty.remove(produkt)
-                    if self.storage_manager.zapisz_produkty(wszystkie_produkty):
-                        print(f"✅ Usunięto produkt: {produkt.nazwa}")
+        while True:
+            try:
+                akcja = input("\nWybierz akcję (1-3): ").strip()
+                if akcja == "1":
+                    indeks = wszystkie_produkty.index(produkt)
+                    if self.storage_manager.oznacz_jako_zuzyty(indeks):
+                        print(f"✅ {produkt.nazwa} oznaczony jako zużyty!")
                         return True
                     else:
-                        print("❌ Błąd podczas zapisywania zmian")
+                        print("❌ Błąd podczas oznaczania jako zużyty")
                         return False
-                return False
-            else:
-                print("❌ Nieprawidłowy wybór")
-                return False
-                
-        except Exception as e:
-            print(f"❌ Błąd podczas zarządzania produktem: {e}")
-            return False
+                elif akcja == "2":
+                    indeks = wszystkie_produkty.index(produkt)
+                    if self.storage_manager.usun_produkt(indeks):
+                        print(f"✅ {produkt.nazwa} usunięty całkowicie!")
+                        return True
+                    else:
+                        print("❌ Błąd podczas usuwania")
+                        return False
+                elif akcja == "3":
+                    return False
+                else:
+                    print("❌ Nieprawidłowy wybór!")
+            except ValueError:
+                print("❌ Nieprawidłowy wybór!")
     
     def _wybierz_kategorie_reczne(self) -> str:
         """
-        Umożliwia ręczny wybór kategorii produktu.
+        Pozwala użytkownikowi wybrać kategorię ręcznie.
         
         Returns:
             str: Wybrana kategoria
         """
-        print("\n📑 Dostępne kategorie:")
+        print("\nDostępne kategorie:")
         for i, kat in enumerate(KATEGORIE, 1):
             print(f"{i}. {kat}")
         
         while True:
             try:
-                wybor = int(input("\nWybierz kategorię (1-{len(KATEGORIE)}): "))
-                if 1 <= wybor <= len(KATEGORIE):
-                    return KATEGORIE[wybor - 1]
+                wybor = input(f"\nWybierz kategorię (1-{len(KATEGORIE)}): ").strip()
+                if wybor.isdigit() and 1 <= int(wybor) <= len(KATEGORIE):
+                    return KATEGORIE[int(wybor) - 1]
                 else:
-                    print("❌ Nieprawidłowy wybór")
+                    print("❌ Nieprawidłowy wybór!")
             except ValueError:
-                print("❌ Nieprawidłowy wybór")
+                print("❌ Nieprawidłowy wybór!")
     
     def _pobierz_date_waznosci(self) -> datetime:
         """
-        Umożliwia ręczne wprowadzenie daty ważności.
+        Pobiera datę ważności od użytkownika.
         
         Returns:
             datetime: Data ważności
         """
         while True:
             try:
-                data_str = input("\n🗓️ Podaj datę ważności (YYYY-MM-DD): ").strip()
+                data_str = input("\nPodaj datę ważności (YYYY-MM-DD): ").strip()
                 data = datetime.strptime(data_str, "%Y-%m-%d")
                 
-                # Sprawdź czy data nie jest z przeszłości
                 if data.date() < datetime.now().date():
                     print("⚠️ Uwaga: Podana data jest z przeszłości!")
-                    potwierdz = input("Czy na pewno chcesz kontynuować? (t/n): ").lower()
-                    if potwierdz == 't':
-                        return data
-                else:
-                    return data
-                    
+                    potwierdz = input("Czy na pewno chcesz kontynuować? (t/n): ")
+                    if potwierdz.lower() != 't':
+                        continue
+                
+                return data
             except ValueError:
-                print("❌ Błędny format daty. Użyj formatu YYYY-MM-DD")
+                print("❌ Błędny format daty! Użyj formatu YYYY-MM-DD")
     
     def _pobierz_cene(self) -> Optional[float]:
         """
-        Umożliwia wprowadzenie ceny produktu (opcjonalnie).
+        Pobiera cenę produktu od użytkownika.
         
         Returns:
             Optional[float]: Cena produktu lub None
         """
-        cena_str = input("\n💰 Podaj cenę (Enter=pomiń): ").strip()
-        if not cena_str:
-            return None
-            
-        try:
-            cena = float(cena_str.replace(',', '.'))
-            if cena < 0:
-                print("❌ Cena nie może być ujemna!")
+        while True:
+            cena_str = input("\n💰 Podaj cenę (opcjonalnie, Enter aby pominąć): ").strip()
+            if not cena_str:
                 return None
-            return cena
-        except ValueError:
-            print("❌ Błędny format ceny!")
-            return None 
+            try:
+                cena = float(cena_str.replace(',', '.'))
+                if cena < 0:
+                    print("❌ Cena nie może być ujemna!")
+                    continue
+                return cena
+            except ValueError:
+                print("❌ Nieprawidłowy format ceny!")

@@ -248,64 +248,38 @@ Koncentrujesz się na wykorzystaniu składników, które mogą się zepsuć oraz
                 self.ui.wyswietl_komunikat(f"❌ Błąd podczas generowania przepisów: {odpowiedz}", "blad")
                 
         except Exception as e:
-            self.ui.wyswietl_komunikat(f"❌ Błąd podczas generowania przepisów: {e}", "blad")
+            self.ui.wyswietl_komunikat(f"❌ Błąd podczas komunikacji z LLM: {e}", "blad")
     
     def _pokaz_statystyki(self) -> None:
         """
-        Wyświetla statystyki spiżarni.
+        Obsługuje wyświetlanie statystyk spiżarni.
         """
         produkty = self.storage_manager.wczytaj_produkty()
-        produkty_aktywne = [p for p in produkty if not p.zuzyty]
-        
-        if not produkty_aktywne:
-            self.ui.wyswietl_komunikat("📦 Spiżarnia jest pusta!", "info")
-            return
-        
-        # Statystyki podstawowe
-        liczba_produktow = len(produkty_aktywne)
-        wartosc_calkowita = sum(p.cena for p in produkty_aktywne if p.cena)
-        
-        # Statystyki kategorii
-        kategorie = {}
-        for p in produkty_aktywne:
-            kategorie[p.kategoria] = kategorie.get(p.kategoria, 0) + 1
-        
-        # Produkty wygasające
-        dzisiaj = datetime.now().date()
-        wygasaja_wkrotce = [p for p in produkty_aktywne 
-                           if (p.data_waznosci.date() - dzisiaj).days <= 3]
-        
-        print("\n" + "=" * 50)
-        print("📊 STATYSTYKI SPIŻARNI")
-        print("=" * 50)
-        
-        print(f"\n📦 Liczba produktów: {liczba_produktow}")
-        if wartosc_calkowita > 0:
-            print(f"💰 Wartość całkowita: {wartosc_calkowita:.2f} zł")
-        
-        print("\n📑 Produkty według kategorii:")
-        for kat, liczba in sorted(kategorie.items()):
-            print(f"   • {kat}: {liczba}")
-        
-        if wygasaja_wkrotce:
-            print("\n⚠️ Produkty wygasające w ciągu 3 dni:")
-            for p in wygasaja_wkrotce:
-                dni_do_wygasniecia = (p.data_waznosci.date() - dzisiaj).days
-                print(f"   • {p.nazwa} ({p.kategoria}) - {dni_do_wygasniecia} dni")
-        
-        print("=" * 50)
+        self.ui.wyswietl_statystyki(produkty)
 
 if __name__ == "__main__":
+    print("🏠 Asystent Zakupów i Spiżarni v2")
+    print("=" * 40)
+    
     # Upewnij się, że wszystkie wymagane katalogi istnieją
+    print("📁 Tworzenie wymaganych katalogów...")
     for sciezka in [
         KONFIGURACJA["paths"]["paragony_nowe"],
-        KONFIGURACJA["paths"]["paragony_przetworzone"],
+        KONFIGURACJA["paths"]["paragony_przetworzone"], 
         KONFIGURACJA["paths"]["paragony_bledy"],
         KONFIGURACJA["paths"]["dane_json_folder"],
         KONFIGURACJA["paths"]["archiwum_json"]
     ]:
         os.makedirs(sciezka, exist_ok=True)
     
+    print("✅ Inicjalizacja zakończona")
+    
     # Uruchom aplikację
-    app = AsystentZakupow()
-    app.uruchom() 
+    try:
+        app = AsystentZakupow()
+        app.uruchom()
+    except KeyboardInterrupt:
+        print("\n\n👋 Aplikacja przerwana przez użytkownika. Do widzenia!")
+    except Exception as e:
+        print(f"\n❌ Nieoczekiwany błąd aplikacji: {e}")
+        print("Sprawdź konfigurację i spróbuj ponownie.")

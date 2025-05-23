@@ -222,4 +222,4 @@ class ParagonProcessor:
             sciezka_docelowa = os.path.join(folder_docelowy, nazwa_pliku)
             shutil.move(sciezka_pliku, sciezka_docelowa)
         except Exception as e:
-            print(f"❌ Błąd podczas przenoszenia pliku '{sciezka_pliku}': {e}") 
+            print(f"❌ Błąd podczas przenoszenia pliku '{sciezka_pliku}': {e}")

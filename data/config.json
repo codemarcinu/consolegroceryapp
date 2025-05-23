@@ -1,0 +1,33 @@
+{
+    "llm": {
+        "enabled": true,
+        "model": "speakleash/bielik-1.5b-v3.0-instruct",
+        "base_url": "http://localhost:11434",
+        "timeout_seconds": 60,
+        "max_tokens": 1024,
+        "temperatura": 0.1,
+        "auto_categorize": true,
+        "auto_expiry_date": true
+    },
+    "ocr": {
+        "gpu": false
+    },
+    "paths": {
+        "paragony_nowe": "paragony/nowe/",
+        "paragony_przetworzone": "paragony/przetworzone/",
+        "paragony_bledy": "paragony/bledy/",
+        "dane_json_folder": "data/",
+        "produkty_json_file": "data/produkty.json",
+        "config_json_file": "data/config.json",
+        "archiwum_json": "data/archive/"
+    },
+    "interface": {
+        "language": "pl",
+        "colors_enabled": true,
+        "table_format": "fancy_grid"
+    },
+    "notifications": {
+        "expiry_warning_days_critical": 3,
+        "expiry_warning_days_warning": 7
+    }
+}
